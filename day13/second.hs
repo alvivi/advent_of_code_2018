@@ -2,7 +2,7 @@
 -- stack script --resolver lts-12.21
 {-# LANGUAGE NamedFieldPuns #-}
 
-import Data.List (nub)
+import Data.List ((\\), sortBy)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)
@@ -159,12 +159,8 @@ duplicates =
             else (updatedAll, unique))
     (Set.empty, Set.empty)
 
-collision :: Scenario -> Maybe [(Int, Int)]
-collision Scenario {carts} =
-  let dups = duplicates $ map (\(a, _, _) -> a) carts
-  in if null dups
-       then Nothing
-       else Just dups
+collision :: Scenario -> [(Int, Int)]
+collision Scenario {carts} = duplicates $ map (\(a, _, _) -> a) carts
 
 moveCart ::
      (Point, Direction, [Direction])
@@ -181,18 +177,34 @@ moveCart (pos, dir, states) scenario@Scenario {rails, crosses} =
                    snd $ head $ filter ((==) dir . fst) $ Set.toList dirSet
              in (applyDirection pos newDir, newDir, states)
 
-findCollision :: Scenario -> [(Int, Int)]
-findCollision scenario =
-  let step scenario@Scenario {carts} iter =
-        case collision scenario of
-          Just point -> point
-          Nothing ->
-            let newCarts = map (`moveCart` scenario) carts
-                newScenario = scenario {carts = newCarts}
-            in step newScenario (iter + 1)
-  in step scenario 0
+getPos :: (a, b, c) -> a
+getPos (pos, _, _) = pos
+
+moveCartAtPos :: Point -> Scenario -> Scenario
+moveCartAtPos cartPos scenario =
+  let cart = head $ filter (\c -> getPos c == cartPos) $ carts scenario
+      otherCarts = filter (\c -> getPos c /= cartPos) $ carts scenario
+      updatedCart = moveCart cart scenario
+      compareCarts lhs rhs = compare (getPos lhs) (getPos rhs)
+  in scenario {carts = sortBy compareCarts (updatedCart : otherCarts)}
+
+removeCarts :: [(Int, Int)] -> Scenario -> Scenario
+removeCarts cartList scenario@Scenario {carts} =
+  scenario {carts = filter (\(p, _, _) -> not $ p `elem` cartList) carts}
+
+findCartAfterCollisions :: Scenario -> [(Int, Int)] -> (Int, Int)
+findCartAfterCollisions scenario@Scenario {carts} [] =
+  findCartAfterCollisions scenario $ map getPos carts
+findCartAfterCollisions scenario (nextCart:cartList) =
+  let updatedScenario@Scenario {carts} = moveCartAtPos nextCart scenario
+  in if length carts == 1
+       then getPos $ head carts
+       else let colList = collision updatedScenario
+            in findCartAfterCollisions
+                 (removeCarts colList updatedScenario)
+                 (cartList \\ colList)
 
 main :: IO ()
 main = do
   scenario <- parse <$> getContents
-  print $ findCollision scenario
+  print $ findCartAfterCollisions scenario []
